@@ -1,0 +1,1928 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+  MotionCapture Studio（单文件 Web 版） 使用说明
+================================================================================
+  1. 用 Chrome / Edge 打开此文件（双击即可，无需服务器，所有计算均在本地浏览器完成）。
+  2. 点击「导入视频」上传一段有人体的视频（支持 MP4 / MOV / WEBM，≤5 分钟，建议 ≤200MB），
+     也可将视频文件直接拖入左侧区域。
+  3. 系统自动对视频第一帧做人形检测：检测到 1 人时自动锁定（绿色方框）；
+     检测到多人时用青色方框标出，点击方框选择追踪目标。
+  4. 点击「播放」，左侧视频播放，右侧模特实时同步运动并自动记录关键帧。
+  5. 播放结束或点击「暂停/停止」后，记录自动无条件保存，视频自动弹出。
+  6. 进入「工作室模式」：可回放记录（播放/暂停、进度拖拽、0.5x/1x/2x 变速）。
+  7. 点击「创建自定义模特」进入身形设定，开放 37 个调节滑块（支持左右对称锁定），
+     模特在保持记录动作的前提下实时变形 —— “新模特学会旧动作”。
+  8. 「导入修正视频」可用第二段视频对记录做加权融合修正，可重复多次。
+  9. 旋转到满意角度后，点击「导出 720P 视频」生成 1280×720@60fps 的 WebM 动作视频。
+ 10. 如需制作新记录，必须先「删除记录」（全局仅允许存在一条记录）。
+================================================================================
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MotionCapture Studio</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#0a0a0f;
+    font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; color:#d8d8e0; }
+  #app { display:flex; flex-direction:column; width:100%; height:100%; }
+
+  /* ---------- 顶部栏 ---------- */
+  #topbar { height:56px; flex:0 0 56px; display:flex; align-items:center;
+    padding:0 16px; gap:12px; background:#101018; border-bottom:1px solid #22222e; }
+  #appTitle { font-size:16px; font-weight:700; letter-spacing:1px; color:#00d4ff; white-space:nowrap; }
+  #statusText { flex:1; text-align:center; font-size:13px; color:#9a9ab0;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #topbarBtns { display:flex; align-items:center; gap:8px; }
+  .btn { background:#1c1c28; color:#d8d8e0; border:1px solid #2c2c3c; border-radius:8px;
+    padding:7px 14px; font-size:13px; cursor:pointer; transition:all .15s; white-space:nowrap; }
+  .btn:hover:not(:disabled) { border-color:#00d4ff; color:#00d4ff; background:#16202a; }
+  .btn:disabled { opacity:.35; cursor:not-allowed; }
+  .btn.primary { background:#0a2a33; border-color:#00d4ff; color:#00d4ff; }
+  .btn.danger { background:#2a1216; border-color:#ff4d5e; color:#ff6b78; }
+  .btn.danger:hover:not(:disabled) { background:#3a161c; border-color:#ff4d5e; color:#ff8590; }
+  .btn.hidden, .hidden { display:none !important; }
+  /* 性别切换 */
+  #genderSwitch { display:flex; border:1px solid #2c2c3c; border-radius:8px; overflow:hidden; }
+  #genderSwitch button { background:#1c1c28; border:none; color:#9a9ab0; padding:7px 12px;
+    font-size:13px; cursor:pointer; transition:all .15s; }
+  #genderSwitch button.active { background:#0a2a33; color:#00d4ff; }
+  #genderSwitch button:disabled { opacity:.35; cursor:not-allowed; }
+  #genderSwitch.disabled { opacity:.45; pointer-events:none; }
+
+  /* ---------- 主体区域 ---------- */
+  #main { flex:1; display:flex; min-height:0; }
+  #leftPane { width:50%; height:100%; background:#0a0a0f; border-right:1px solid #22222e;
+    position:relative; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  #rightPane { width:50%; height:100%; background:#1a1a20; position:relative; overflow:hidden; }
+
+  /* 左侧：空占位 / 拖拽区 */
+  #dropZone { width:100%; height:100%; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:14px; cursor:pointer; border:2px dashed transparent; transition:border-color .2s; }
+  #dropZone.dragover { border-color:#00d4ff; background:#0c1418; }
+  #dropZone .icon { font-size:52px; opacity:.5; }
+  #dropZone .tip { font-size:14px; color:#9a9ab0; }
+  #dropZone .sub { font-size:12px; color:#55556a; }
+
+  /* 左侧：视频容器 */
+  #videoWrap { position:relative; width:100%; height:100%; display:flex;
+    align-items:center; justify-content:center; background:#000; }
+  #videoEl { max-width:100%; max-height:100%; display:block; }
+  #overlayCanvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:auto; }
+
+  /* 左侧：记录信息面板 */
+  #recordPanel { display:none; width:100%; height:100%; padding:28px; overflow-y:auto; }
+  #recordPanel h2 { font-size:16px; color:#00d4ff; margin-bottom:16px; }
+  .infoGrid { display:grid; grid-template-columns:auto 1fr; gap:8px 18px; font-size:13px;
+    background:#12121c; border:1px solid #22222e; border-radius:10px; padding:16px; margin-bottom:18px; }
+  .infoGrid .k { color:#7777aa; }
+  .infoGrid .v { color:#e8e8f0; }
+  .panelBtns { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
+  /* 回放控制 */
+  #replayControls { background:#12121c; border:1px solid #22222e; border-radius:10px; padding:14px 16px; }
+  #replayControls .row1 { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  #replayProgress { flex:1; -webkit-appearance:none; appearance:none; height:6px; border-radius:3px;
+    background:#262636; outline:none; cursor:pointer; }
+  #replayProgress::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; width:14px; height:14px;
+    border-radius:50%; background:#00d4ff; cursor:pointer; }
+  #replayTime { font-size:12px; color:#9a9ab0; min-width:86px; text-align:right; font-variant-numeric:tabular-nums; }
+  .speedBtn { background:#1c1c28; border:1px solid #2c2c3c; color:#9a9ab0; border-radius:6px;
+    padding:4px 10px; font-size:12px; cursor:pointer; }
+  .speedBtn.active { color:#00d4ff; border-color:#00d4ff; background:#0a2a33; }
+
+  /* 右侧：Three.js 画布 */
+  #threeContainer { position:absolute; inset:0; }
+  #threeContainer canvas { display:block; }
+
+  /* 模特身形设定面板（右侧视口左边缘） */
+  #bodyPanel { position:absolute; left:0; top:0; bottom:0; width:280px; background:rgba(16,16,24,.96);
+    border-right:1px solid #22222e; display:flex; flex-direction:column; z-index:10;
+    transition:transform .25s; }
+  #bodyPanel.collapsed { transform:translateX(-232px); }
+  #bodyPanel.collapsed #bodyPanelBody,
+  #bodyPanel.collapsed #bodyPanelHeader .title,
+  #bodyPanel.collapsed #subStateTag { visibility:hidden; }
+  #bodyPanelHeader { height:48px; flex:0 0 48px; display:flex; align-items:center; padding:0 12px;
+    gap:8px; cursor:pointer; border-bottom:1px solid #22222e; user-select:none; }
+  #bodyPanelHeader .title { font-size:13px; font-weight:600; color:#00d4ff; flex:1; }
+  #subStateTag { font-size:11px; color:#0a0a0f; background:#00d4ff; border-radius:4px; padding:2px 6px; }
+  #collapseIcon { color:#7777aa; font-size:12px; }
+  #bodyPanelBody { flex:1; overflow-y:auto; padding:10px 12px 20px; }
+  #bodyPanelBody::-webkit-scrollbar { width:6px; }
+  #bodyPanelBody::-webkit-scrollbar-thumb { background:#2c2c3c; border-radius:3px; }
+  .panelNote { font-size:12px; color:#7777aa; line-height:1.6; padding:8px 2px; }
+  .panelRow { display:flex; gap:8px; margin:10px 0; }
+  .panelRow .btn { flex:1; text-align:center; padding:6px 4px; font-size:12px; }
+  .symRow { display:flex; align-items:center; gap:8px; font-size:12px; color:#9a9ab0; margin:10px 0; }
+  .symRow input { accent-color:#00d4ff; }
+  details.paramGroup { border:1px solid #22222e; border-radius:8px; margin-bottom:8px; background:#12121c; }
+  details.paramGroup summary { cursor:pointer; padding:8px 10px; font-size:12px; color:#00d4ff;
+    font-weight:600; user-select:none; list-style:none; }
+  details.paramGroup summary::before { content:"▾ "; }
+  details.paramGroup:not([open]) summary::before { content:"▸ "; }
+  details.paramGroup .groupBody { padding:4px 10px 10px; }
+  .sliderRow { display:flex; align-items:center; gap:6px; margin:7px 0; font-size:12px; }
+  .sliderRow .lbl { width:76px; flex:0 0 76px; color:#b8b8cc; }
+  .sliderRow input[type=range] { flex:1; min-width:0; -webkit-appearance:none; appearance:none; height:4px;
+    border-radius:2px; background:#262636; outline:none; }
+  .sliderRow input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; appearance:none;
+    width:12px; height:12px; border-radius:50%; background:#00d4ff; cursor:pointer; }
+  .sliderRow .val { width:34px; flex:0 0 34px; text-align:right; color:#00d4ff;
+    font-variant-numeric:tabular-nums; font-size:11px; }
+  .sliderRow.disabled { opacity:.35; pointer-events:none; }
+  details.paramGroup.rightLocked .groupBody { opacity:.35; pointer-events:none; }
+  details.paramGroup.rightLocked summary::after { content:"（已对称锁定）"; color:#55556a; font-weight:400; }
+
+  /* ---------- 模态框 / 提示 ---------- */
+  #modalMask { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
+    align-items:center; justify-content:center; z-index:100; }
+  #modalBox { background:#14141e; border:1px solid #2c2c3c; border-radius:12px; padding:22px 24px;
+    width:380px; max-width:90vw; }
+  #modalBox h3 { font-size:15px; color:#e8e8f0; margin-bottom:12px; }
+  #modalBox .modalText { font-size:13px; color:#9a9ab0; line-height:1.6; margin-bottom:18px; }
+  #modalBox .modalBtns { display:flex; justify-content:flex-end; gap:10px; }
+  /* 融合面板 */
+  #fusionSliders { margin-bottom:18px; }
+  #fusionSliders .sliderRow .lbl { width:96px; flex-basis:96px; }
+  /* Toast */
+  #toast { position:fixed; left:50%; bottom:36px; transform:translateX(-50%) translateY(20px);
+    background:#1c1c28; border:1px solid #00d4ff; color:#d8f6ff; padding:10px 20px; border-radius:8px;
+    font-size:13px; opacity:0; pointer-events:none; transition:all .3s; z-index:200; max-width:80vw; }
+  #toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+  #toast.warn { border-color:#ffb347; color:#ffe8cc; }
+  #toast.error { border-color:#ff4d5e; color:#ffd6da; }
+
+  input[type=file] { display:none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- ============ 顶部栏 ============ -->
+  <div id="topbar">
+    <div id="appTitle">MotionCapture Studio</div>
+    <div id="statusText">等待导入视频</div>
+    <div id="topbarBtns">
+      <div id="genderSwitch">
+        <button id="btnMale" class="active">男模</button>
+        <button id="btnFemale">女模</button>
+      </div>
+      <button class="btn primary" id="btnImport">导入视频</button>
+      <button class="btn" id="btnPlay" disabled>播放</button>
+      <button class="btn hidden" id="btnDeleteVideo">删除视频</button>
+      <button class="btn hidden" id="btnCancelCorrect">取消修正</button>
+      <button class="btn hidden" id="btnCorrection">导入修正视频</button>
+      <button class="btn hidden" id="btnCustom">创建自定义模特</button>
+      <button class="btn hidden" id="btnExport">导出 720P 视频</button>
+      <button class="btn danger hidden" id="btnDeleteRecord">删除记录</button>
+    </div>
+  </div>
+
+  <!-- ============ 主体 ============ -->
+  <div id="main">
+    <!-- 左侧：视频 / 记录信息区 -->
+    <div id="leftPane">
+      <div id="dropZone">
+        <div class="icon">🎬</div>
+        <div class="tip">请导入视频（支持 MP4/MOV/WEBM，≤5 分钟）</div>
+        <div class="sub">点击此处或拖拽文件到此处上传 · 也可加载已有记录 JSON</div>
+        <button class="btn" id="btnLoadRecord">加载记录 JSON</button>
+      </div>
+      <div id="videoWrap" class="hidden">
+        <video id="videoEl" playsinline></video>
+        <canvas id="overlayCanvas"></canvas>
+      </div>
+      <div id="recordPanel">
+        <h2>记录信息面板</h2>
+        <div class="infoGrid">
+          <span class="k">记录时长</span><span class="v" id="infoDuration">-</span>
+          <span class="k">总帧数</span><span class="v" id="infoFrames">-</span>
+          <span class="k">创建时间</span><span class="v" id="infoCreated">-</span>
+          <span class="k">原始性别</span><span class="v" id="infoGender">-</span>
+        </div>
+        <div class="panelBtns">
+          <button class="btn primary" id="btnReplay">回放</button>
+          <button class="btn" id="btnCorrection2">导入修正视频</button>
+          <button class="btn" id="btnExportRecord">导出记录 JSON</button>
+          <button class="btn danger" id="btnDeleteRecord2">删除记录</button>
+        </div>
+        <div id="replayControls">
+          <div class="row1">
+            <button class="btn" id="btnReplayPlay" style="min-width:74px;">播放</button>
+            <input type="range" id="replayProgress" min="0" max="1000" value="0">
+            <span id="replayTime">0.00 / 0.00s</span>
+          </div>
+          <div class="row1" style="margin-bottom:0;">
+            <span style="font-size:12px;color:#7777aa;">速度</span>
+            <button class="speedBtn" data-speed="0.5">0.5x</button>
+            <button class="speedBtn active" data-speed="1">1x</button>
+            <button class="speedBtn" data-speed="2">2x</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右侧：Three.js 视口 -->
+    <div id="rightPane">
+      <div id="threeContainer"></div>
+      <div id="bodyPanel" class="collapsed hidden">
+        <div id="bodyPanelHeader">
+          <span class="title">模特身形设定</span>
+          <span id="subStateTag">原始</span>
+          <span id="collapseIcon">▶</span>
+        </div>
+        <div id="bodyPanelBody">
+          <div class="panelNote" id="panelNote"></div>
+          <div class="panelRow">
+            <button class="btn" id="btnCustom2">创建自定义模特</button>
+          </div>
+          <div id="customControls" class="hidden">
+            <div class="symRow">
+              <label><input type="checkbox" id="symLock" checked> 左右对称锁定</label>
+            </div>
+            <div id="sliderGroups"></div>
+            <div class="panelRow">
+              <button class="btn" id="btnResetParams">重置为默认</button>
+            </div>
+            <div class="panelRow">
+              <button class="btn" id="btnSaveConfig">保存模特配置</button>
+              <button class="btn" id="btnLoadConfig">加载模特配置</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 模态框（确认删除 / 融合设置 / 导出提示） -->
+<div id="modalMask">
+  <div id="modalBox">
+    <h3 id="modalTitle">提示</h3>
+    <div class="modalText" id="modalText"></div>
+    <div id="fusionSliders" class="hidden">
+      <div class="sliderRow">
+        <span class="lbl">原记录权重</span>
+        <input type="range" id="weightA" min="0" max="1" step="0.01" value="0.5">
+        <span class="val" id="weightAVal">0.50</span>
+      </div>
+      <div class="sliderRow">
+        <span class="lbl">新记录权重</span>
+        <input type="range" id="weightB" min="0" max="1" step="0.01" value="0.5">
+        <span class="val" id="weightBVal">0.50</span>
+      </div>
+    </div>
+    <div class="modalBtns">
+      <button class="btn" id="modalCancel">取消</button>
+      <button class="btn primary" id="modalOk">确定</button>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<input type="file" id="fileInput" accept="video/mp4,video/quicktime,video/webm,video/*">
+<input type="file" id="recordFileInput" accept=".json,application/json">
+<input type="file" id="configFileInput" accept=".json,application/json">
+
+<!-- CDN：Three.js r128 + OrbitControls + 旧版 MediaPipe Pose（降级兜底）。
+     主引擎 Tasks Vision PoseLandmarker 通过动态 import() 加载 ESM 版本（见 initPose）。 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script>
+"use strict";
+
+/* ================================================================
+   1. 配置区
+================================================================ */
+// 37 项身形参数：头部 5 + 躯干 8 + 左臂 6 + 右臂 6 + 左腿 6 + 右腿 6
+const PARAM_RANGES = { min: 0.5, max: 1.5, step: 0.01 };
+const WIDTH_RANGE  = { min: 0.5, max: 1.8, step: 0.01 }; // 肩宽 / 髋宽
+
+const GENDER_DEFAULTS = {
+  male: {
+    neckLen:1.0,  neckThick:1.0,  headLen:1.05, headWid:1.0,  headDep:1.0,
+    shoulderWid:1.2, chestLen:1.0, chestTop:1.1, chestBot:1.0,
+    waistLen:1.0,  waistTop:0.9,  waistBot:0.95, hipWid:0.95,
+    uArmLenL:1.0, uArmThkL:1.05, lArmLenL:1.0, lArmThkL:1.0, handLenL:1.0, handThkL:1.0,
+    uArmLenR:1.0, uArmThkR:1.05, lArmLenR:1.0, lArmThkR:1.0, handLenR:1.0, handThkR:1.0,
+    thighLenL:1.0, thighThkL:1.05, shinLenL:1.0, shinThkL:1.0, footLenL:1.0, footThkL:1.0,
+    thighLenR:1.0, thighThkR:1.05, shinLenR:1.0, shinThkR:1.0, footLenR:1.0, footThkR:1.0
+  },
+  female: {
+    neckLen:0.9,  neckThick:0.85, headLen:1.0,  headWid:0.95, headDep:0.9,
+    shoulderWid:0.9, chestLen:0.95, chestTop:1.0, chestBot:0.95,
+    waistLen:1.0,  waistTop:0.75, waistBot:1.05, hipWid:1.1,
+    uArmLenL:1.0, uArmThkL:0.9, lArmLenL:1.0, lArmThkL:0.85, handLenL:1.0, handThkL:0.9,
+    uArmLenR:1.0, uArmThkR:0.9, lArmLenR:1.0, lArmThkR:0.85, handLenR:1.0, handThkR:0.9,
+    thighLenL:1.0, thighThkL:1.0, shinLenL:0.95, shinThkL:0.9, footLenL:1.0, footThkL:0.9,
+    thighLenR:1.0, thighThkR:1.0, shinLenR:0.95, shinThkR:0.9, footLenR:1.0, footThkR:0.9
+  }
+};
+
+// 滑块分组定义（label, key, 是否为宽度范围, 右侧镜像标记）
+const PARAM_GROUPS = [
+  { title:'头部', items:[
+    ['颈部长度','neckLen'],['颈部粗细','neckThick'],['头部长度','headLen'],
+    ['头部宽度','headWid'],['头部厚度','headDep']]},
+  { title:'躯干', items:[
+    ['肩宽','shoulderWid','W'],['胸廓长度','chestLen'],['胸廓上端粗细','chestTop'],
+    ['胸廓下端粗细','chestBot'],['腰腹长度','waistLen'],['腰腹上端粗细','waistTop'],
+    ['腰腹下端粗细','waistBot'],['髋宽','hipWid','W']]},
+  { title:'左臂', items:[
+    ['上臂长度','uArmLenL'],['上臂粗细','uArmThkL'],['前臂长度','lArmLenL'],
+    ['前臂粗细','lArmThkL'],['手部长度','handLenL'],['手部粗细','handThkL']]},
+  { title:'右臂', side:'R', items:[
+    ['上臂长度','uArmLenR'],['上臂粗细','uArmThkR'],['前臂长度','lArmLenR'],
+    ['前臂粗细','lArmThkR'],['手部长度','handLenR'],['手部粗细','handThkR']]},
+  { title:'左腿', items:[
+    ['大腿长度','thighLenL'],['大腿粗细','thighThkL'],['小腿长度','shinLenL'],
+    ['小腿粗细','shinThkL'],['脚部长度','footLenL'],['脚部粗细','footThkL']]},
+  { title:'右腿', side:'R', items:[
+    ['大腿长度','thighLenR'],['大腿粗细','thighThkR'],['小腿长度','shinLenR'],
+    ['小腿粗细','shinThkR'],['脚部长度','footLenR'],['脚部粗细','footThkR']]}
+];
+
+// 模特基础尺寸（米级，配合参数缩放）
+const BASE = {
+  shoulderDist: 0.38, hipDist: 0.17,
+  chestLen: 0.30, chestR: 0.130,
+  waistLen: 0.22, waistR: 0.115,
+  neckLen: 0.07, neckR: 0.040,
+  headSX: 0.082, headSY: 0.105, headSZ: 0.088,
+  uArmLen: 0.22, uArmR: 0.040,
+  lArmLen: 0.20, lArmR: 0.034,
+  handLen: 0.12, handR: 0.030,
+  thighLen: 0.32, thighR: 0.050,
+  shinLen: 0.32, shinR: 0.042,
+  footLen: 0.14, footR: 0.035,
+  jointR: 0.042, ankleH: 0.055
+};
+const COLOR_BODY = 0xe6e6ec, COLOR_JOINT = 0xbabac6;
+
+/* ================================================================
+   2. 状态管理（严格状态机）
+================================================================ */
+// 主状态：EMPTY | VIDEO_LOADED | RECORDING | RECORD_SAVED
+let currentState = 'EMPTY';
+// 子状态：ORIGINAL | CUSTOM（仅在 RECORD_SAVED 有效）
+let subState = 'ORIGINAL';
+let savedRecord = null;          // 唯一真理来源：全局只允许一条记录
+let frameBuffer = [];            // 记录中实时缓冲
+let correctionBuffer = null;     // 修正视频提取的临时 Record B
+let correctionMode = false;      // 临时修正模式（RECORD_SAVED 下的特殊分支）
+let isSymmetric = true;
+let currentGender = 'male';
+let customParams = Object.assign({}, GENDER_DEFAULTS.male);
+
+// 追踪相关
+let trackingLocked = false;      // 第一帧是否已锁定目标
+let detectedPersons = [];        // 第一帧检测到的所有人体方框
+let selectedPersonIdx = -1;
+let lastTargetHip = null;        // 上一帧目标髋部中心（最近邻追踪）
+let calibHipY = null;            // 锁定帧髋部 y（用于根节点垂直位移标定）
+let lostFrames = 0;
+let lostSince = null;
+let lastValidLandmarks = null;   // 追踪丢失时保持上一帧姿态
+
+// 回放引擎
+let replay = { playing:false, time:0, speed:1 };
+let exportActive = false;
+let mediaRecorder = null, recordedChunks = [];
+
+// 视频处理
+let pose = null, poseReady = false, poseBusy = false;
+let rafVideoCb = null;
+
+/* ================================================================
+   3. Three.js 初始化
+================================================================ */
+const container = document.getElementById('threeContainer');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a20);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 100);
+camera.position.set(0.0, 1.35, 2.9);
+const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // 限幅像素比，避免高分屏卡顿
+container.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.95, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.update();
+
+// 三点布光：主光 + 补光 + 轮廓光，提升立体感
+scene.add(new THREE.HemisphereLight(0xffffff, 0x2a2a34, 0.8));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+dirLight.position.set(2.2, 4, 2.5);
+scene.add(dirLight);
+const fillLight = new THREE.DirectionalLight(0x8899ff, 0.3);
+fillLight.position.set(-2, 1.5, -2);
+scene.add(fillLight);
+const rimLight = new THREE.DirectionalLight(0xaaddff, 0.55);
+rimLight.position.set(-1, 3, -3.5);
+scene.add(rimLight);
+
+// 半透明白色地平面网格
+const grid = new THREE.GridHelper(6, 30, 0xffffff, 0xffffff);
+grid.material.transparent = true;
+grid.material.opacity = 0.10;
+scene.add(grid);
+const groundPlane = new THREE.Mesh(
+  new THREE.PlaneGeometry(6, 6),
+  new THREE.MeshStandardMaterial({ color:0x14141c, roughness:1, metalness:0, transparent:true, opacity:0.35 })
+);
+groundPlane.rotation.x = -Math.PI/2;
+groundPlane.position.y = -0.002;
+scene.add(groundPlane);
+
+// 柔和接触阴影（径向渐变贴片，跟随模特脚下）
+function makeBlobShadow() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(128, 128, 8, 128, 128, 120);
+  grad.addColorStop(0, 'rgba(0,0,0,0.55)');
+  grad.addColorStop(0.6, 'rgba(0,0,0,0.28)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.8, 1.8),
+    new THREE.MeshBasicMaterial({ map:new THREE.CanvasTexture(c), transparent:true, depthWrite:false })
+  );
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = 0.0015;
+  return m;
+}
+const blobShadow = makeBlobShadow();
+scene.add(blobShadow);
+
+function resizeRenderer(w, h) {
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+function resizeToContainer() {
+  resizeRenderer(container.clientWidth || 1, container.clientHeight || 1);
+}
+window.addEventListener('resize', () => { if (!exportActive) resizeToContainer(); resizeOverlay(); });
+
+/* ================================================================
+   4. 模型构建系统（服装店机械木偶风格，程序化生成）
+================================================================ */
+const bodyMaterial  = new THREE.MeshStandardMaterial({ color:COLOR_BODY,  roughness:0.12, metalness:0.08 });
+const jointMaterial = new THREE.MeshStandardMaterial({ color:COLOR_JOINT, roughness:0.25, metalness:0.1 });
+
+// CapsuleGeometry 兼容实现（r128 无内置 CapsuleGeometry 时用 Lathe 生成胶囊体）
+function createCapsuleGeometry(radius, length) {
+  if (THREE.CapsuleGeometry) return new THREE.CapsuleGeometry(radius, length, 4, 8);
+  const pts = [];
+  const half = length / 2, SEG = 6;
+  for (let i = 0; i <= SEG; i++) {           // 下半球
+    const t = (i / SEG) * Math.PI / 2;
+    pts.push(new THREE.Vector2(Math.max(radius * Math.sin(t), 1e-4), -half - radius * Math.cos(t)));
+  }
+  pts.push(new THREE.Vector2(radius, half)); // 圆柱段
+  for (let i = 0; i <= SEG; i++) {           // 上半球
+    const t = (i / SEG) * Math.PI / 2;
+    pts.push(new THREE.Vector2(Math.max(radius * Math.cos(t), 1e-4), half + radius * Math.sin(t)));
+  }
+  return new THREE.LatheGeometry(pts, 12);
+}
+
+// 全局模型引用表
+const model = {};       // 各 Group / Mesh 引用
+const targetQ = {};     // 各骨骼目标四元数（用于 SLERP 平滑）
+const rootTarget = new THREE.Vector3();
+let curLegHeight = 0;   // 当前腿总长（随参数变化）
+
+function makeJointSphere(r) {
+  const s = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 16), jointMaterial);
+  return s;
+}
+// 创建一段肢体：Group(关节球 + 胶囊 Mesh)，胶囊沿局部 -Y 延伸
+function makeLimbSeg(name, len, radius) {
+  const g = new THREE.Group();
+  g.name = name;
+  g.add(makeJointSphere(radius * 1.18));
+  const mesh = new THREE.Mesh(createCapsuleGeometry(radius, len), bodyMaterial);
+  mesh.name = name + '_Mesh';
+  g.add(mesh);
+  g.userData.baseLen = len;
+  g.userData.baseR = radius;
+  g.userData.total = len + radius * 2;
+  g.userData.mesh = mesh;
+  return g;
+}
+
+function buildModelHierarchy() {
+  // Root (HipsCenter)
+  const root = new THREE.Group();
+  root.name = 'Root';
+  model.root = root;
+
+  // 骨盆（圆润曲面块，连接躯干与双腿）
+  const pelvisMesh = new THREE.Mesh(torsoGeometry(0.12, 0.14, 0.15), bodyMaterial);
+  pelvisMesh.name = 'PelvisMesh';
+  root.add(pelvisMesh);
+  model.pelvisMesh = pelvisMesh;
+
+  // SpineLowerGroup（腰腹段）
+  const spineLower = new THREE.Group();
+  spineLower.name = 'SpineLowerGroup';
+  root.add(spineLower);
+  const waistMesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 16), bodyMaterial);
+  waistMesh.name = 'WaistMesh';
+  spineLower.add(waistMesh);
+  model.spineLower = spineLower; model.waistMesh = waistMesh;
+
+  // SpineUpperGroup（胸廓段）
+  const spineUpper = new THREE.Group();
+  spineUpper.name = 'SpineUpperGroup';
+  spineLower.add(spineUpper);
+  const chestMesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 16), bodyMaterial);
+  chestMesh.name = 'ChestMesh';
+  spineUpper.add(chestMesh);
+  model.spineUpper = spineUpper; model.chestMesh = chestMesh;
+
+  // NeckGroup / HeadGroup
+  const neck = makeLimbSeg('NeckGroup', BASE.neckLen, BASE.neckR);
+  spineUpper.add(neck);
+  model.neck = neck; model.neckMesh = neck.userData.mesh;
+  const headGroup = new THREE.Group();
+  headGroup.name = 'HeadGroup';
+  neck.add(headGroup);
+  const headMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 16), bodyMaterial);
+  headMesh.name = 'HeadMesh';
+  headGroup.add(headMesh);
+  model.headGroup = headGroup; model.headMesh = headMesh;
+
+  // 手臂（左/右）
+  ['L', 'R'].forEach(side => {
+    const sideName = side === 'L' ? 'Left' : 'Right';
+    const shoulder = new THREE.Group();
+    shoulder.name = sideName + 'ShoulderJoint';
+    shoulder.add(makeJointSphere(BASE.jointR));
+    spineUpper.add(shoulder);
+    const uArm = makeLimbSeg(sideName + 'UpperArmGroup', BASE.uArmLen, BASE.uArmR);
+    shoulder.add(uArm);
+    const elbow = new THREE.Group();
+    elbow.name = sideName + 'ElbowJoint';
+    elbow.add(makeJointSphere(BASE.jointR * 0.92));
+    uArm.add(elbow);
+    const lArm = makeLimbSeg(sideName + 'LowerArmGroup', BASE.lArmLen, BASE.lArmR);
+    elbow.add(lArm);
+    const wrist = new THREE.Group();
+    wrist.name = sideName + 'WristJoint';
+    wrist.add(makeJointSphere(BASE.jointR * 0.8));
+    lArm.add(wrist);
+    const hand = makeLimbSeg(sideName + 'HandGroup', BASE.handLen, BASE.handR);
+    wrist.add(hand);
+    model['shoulder' + side] = shoulder;
+    model['uArm' + side] = uArm; model['uArmMesh' + side] = uArm.userData.mesh;
+    model['elbow' + side] = elbow;
+    model['lArm' + side] = lArm; model['lArmMesh' + side] = lArm.userData.mesh;
+    model['wrist' + side] = wrist;
+    model['hand' + side] = hand; model['handMesh' + side] = hand.userData.mesh;
+  });
+
+  // 腿（左/右）
+  ['L', 'R'].forEach(side => {
+    const sideName = side === 'L' ? 'Left' : 'Right';
+    const hip = new THREE.Group();
+    hip.name = sideName + 'HipJoint';
+    hip.add(makeJointSphere(BASE.jointR * 1.1));
+    root.add(hip);
+    const thigh = makeLimbSeg(sideName + 'UpperLegGroup', BASE.thighLen, BASE.thighR);
+    hip.add(thigh);
+    const knee = new THREE.Group();
+    knee.name = sideName + 'KneeJoint';
+    knee.add(makeJointSphere(BASE.jointR));
+    thigh.add(knee);
+    const shin = makeLimbSeg(sideName + 'LowerLegGroup', BASE.shinLen, BASE.shinR);
+    knee.add(shin);
+    const ankle = new THREE.Group();
+    ankle.name = sideName + 'AnkleJoint';
+    ankle.add(makeJointSphere(BASE.jointR * 0.85));
+    shin.add(ankle);
+    const foot = makeLimbSeg(sideName + 'FootGroup', BASE.footLen, BASE.footR);
+    ankle.add(foot);
+    model['hip' + side] = hip;
+    model['thigh' + side] = thigh; model['thighMesh' + side] = thigh.userData.mesh;
+    model['knee' + side] = knee;
+    model['shin' + side] = shin; model['shinMesh' + side] = shin.userData.mesh;
+    model['ankle' + side] = ankle;
+    model['foot' + side] = foot; model['footMesh' + side] = foot.userData.mesh;
+  });
+
+  scene.add(root);
+
+  // 初始化目标四元数表
+  ['spineLower','spineUpper','neck','headGroup',
+   'shoulderL','shoulderR','uArmL','uArmR','elbowL','elbowR','lArmL','lArmR','wristL','wristR','handL','handR',
+   'hipL','hipR','thighL','thighR','kneeL','kneeR','shinL','shinR','ankleL','ankleR','footL','footR'
+  ].forEach(k => { if (model[k]) targetQ[k] = new THREE.Quaternion(); });
+}
+
+// 更新一段肢体：scale + mesh 位置 + 子关节位置（保持当前旋转姿态不变）
+function updateLimb(segGroup, mesh, lenParam, thkParam, childJoints) {
+  const total = segGroup.userData.total * lenParam;
+  mesh.scale.set(thkParam, lenParam, thkParam);
+  mesh.position.y = -total / 2;                 // 肢体从关节处向下延伸
+  (childJoints || []).forEach(j => { j.position.set(0, -total, 0); }); // 子关节随肢体变长自动位移
+  return total;
+}
+// 躯干曲面：车削轮廓（两端圆角收边 + 中部微鼓），替代生硬直筒
+function torsoGeometry(topR, bottomR, h) {
+  const pts = [], N = 14;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N, y = (t - 0.5) * h;
+    let r = bottomR + (topR - bottomR) * t;
+    const edge = Math.min(t / 0.16, 1) * Math.min((1 - t) / 0.16, 1); // 端部收圆
+    r *= 0.42 + 0.58 * Math.sin(edge * Math.PI / 2);
+    r *= 1 + 0.05 * Math.sin(t * Math.PI);                            // 中段微鼓
+    pts.push(new THREE.Vector2(Math.max(r, 0.012), y));
+  }
+  return new THREE.LatheGeometry(pts, 20);
+}
+// 更新躯干段（支持锥度，重建几何体并 dispose 旧几何体）
+function updateTorso(mesh, topR, bottomR, height) {
+  const old = mesh.geometry;
+  mesh.geometry = torsoGeometry(topR, bottomR, Math.max(height, 0.04));
+  old.dispose();
+  mesh.position.y = height / 2;
+  return height;
+}
+// 骨盆段（髋线下方，圆润过渡到大腿根）
+function updatePelvis(mesh, p) {
+  const old = mesh.geometry;
+  mesh.geometry = torsoGeometry(BASE.waistR * p.waistBot * 1.06, BASE.hipDist * p.hipWid * 0.72 + 0.055, 0.15);
+  old.dispose();
+  mesh.position.y = -0.045;
+}
+
+// 核心：根据 37 项参数更新所有几何体、scale、子关节位置（不重建场景图）
+function applyBodyParams(p) {
+  // --- 腰腹 ---
+  const waistH = updateTorso(model.waistMesh,
+    BASE.waistR * p.waistTop, BASE.waistR * p.waistBot, BASE.waistLen * p.waistLen);
+  model.spineUpper.position.set(0, waistH, 0);
+  // --- 胸廓 ---
+  const chestH = updateTorso(model.chestMesh,
+    BASE.chestR * p.chestTop, BASE.chestR * p.chestBot, BASE.chestLen * p.chestLen);
+  model.neck.position.set(0, chestH, 0);
+  // --- 肩宽（移动肩关节 Group 的 position.x）---
+  model.shoulderL.position.set(-BASE.shoulderDist * p.shoulderWid / 2, chestH * 0.88, 0);
+  model.shoulderR.position.set( BASE.shoulderDist * p.shoulderWid / 2, chestH * 0.88, 0);
+  // --- 髋宽 ---
+  model.hipL.position.set(-BASE.hipDist * p.hipWid / 2, 0, 0);
+  model.hipR.position.set( BASE.hipDist * p.hipWid / 2, 0, 0);
+  // --- 颈部 / 头部 ---
+  const neckTotal = updateLimb(model.neck, model.neckMesh, p.neckLen, p.neckThick, [model.headGroup]);
+  model.headMesh.scale.set(BASE.headSX * p.headWid, BASE.headSY * p.headLen, BASE.headSZ * p.headDep);
+  model.headMesh.position.y = BASE.headSY * p.headLen * 0.85;
+  // --- 骨盆 ---
+  updatePelvis(model.pelvisMesh, p);
+  // --- 手臂 ---
+  ['L', 'R'].forEach(s => {
+    updateLimb(model['uArm' + s], model['uArmMesh' + s], p['uArmLen' + s], p['uArmThk' + s], [model['elbow' + s]]);
+    updateLimb(model['lArm' + s], model['lArmMesh' + s], p['lArmLen' + s], p['lArmThk' + s], [model['wrist' + s]]);
+    updateLimb(model['hand' + s], model['handMesh' + s], p['handLen' + s], p['handThk' + s], []);
+    model['handMesh' + s].scale.z *= 0.55; // 手掌前后压扁，更接近手型
+  });
+  // --- 腿 ---
+  let thighTotal = 0, shinTotal = 0;
+  ['L', 'R'].forEach(s => {
+    const t = updateLimb(model['thigh' + s], model['thighMesh' + s], p['thighLen' + s], p['thighThk' + s], [model['knee' + s]]);
+    const sh = updateLimb(model['shin' + s], model['shinMesh' + s], p['shinLen' + s], p['shinThk' + s], [model['ankle' + s]]);
+    const fm = model['footMesh' + s];
+    const footTotal = model['foot' + s].userData.total * p['footLen' + s];
+    fm.scale.set(p['footThk' + s] * 1.08, p['footLen' + s], p['footThk' + s] * 0.6); // 脚型：略宽、上下压扁
+    fm.rotation.x = Math.PI / 2;              // 脚部沿 +Z 向前延伸
+    fm.position.set(0, -BASE.ankleH * 0.35, footTotal / 2);
+    thighTotal = t; shinTotal = sh;
+  });
+  // 根节点高度：大腿 + 小腿 + 脚踝高度，确保站立时脚底触地
+  curLegHeight = thighTotal + shinTotal + BASE.ankleH * Math.max(p.footThkL, 0.5);
+}
+
+function activeParams() {
+  return (currentState === 'RECORD_SAVED' && subState === 'CUSTOM') ? customParams : GENDER_DEFAULTS[currentGender];
+}
+function setModelGender(gender) {
+  currentGender = gender;
+  document.getElementById('btnMale').classList.toggle('active', gender === 'male');
+  document.getElementById('btnFemale').classList.toggle('active', gender === 'female');
+  if (subState === 'CUSTOM') { customParams = Object.assign({}, GENDER_DEFAULTS[gender]); syncSliders(); }
+  applyBodyParams(activeParams());
+  updateRootBaseY();
+}
+function updateRootBaseY() {
+  if (currentState !== 'RECORDING' && !replay.playing) {
+    rootTarget.set(0, curLegHeight, 0);
+    model.root.position.set(0, curLegHeight, 0);
+  }
+}
+
+/* ================================================================
+   5. 姿态映射（关键点 → 骨骼旋转，向量法，与肢体长度无关）
+================================================================ */
+const DOWN = new THREE.Vector3(0, -1, 0), UP = new THREE.Vector3(0, 1, 0), FWD = new THREE.Vector3(0, 0, 1);
+const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q1 = new THREE.Quaternion();
+let scaleSmooth = 2.0; // 标定点 → 模型空间的全局缩放（平滑更新）
+
+// T-Pose：全部恢复默认站姿（双臂平举）。
+// 子关节目标置为单位四元数（表示“延续父段方向”），前臂/手/小腿/脚自动打直。
+function setTPoseTargets() {
+  Object.keys(targetQ).forEach(k => targetQ[k].identity());
+  targetQ.uArmL.setFromUnitVectors(DOWN, _v1.set(-1, 0, 0));
+  targetQ.uArmR.setFromUnitVectors(DOWN, _v1.set(1, 0, 0));
+  rootTarget.set(0, curLegHeight, 0);
+}
+
+// 层级补偿求解：给定骨骼期望的世界方向，结合父骨骼的世界目标旋转，解算局部四元数。
+// qWorld = setFromUnitVectors(def, dirWorld)；qLocal = inv(qParentWorld) * qWorld。
+// 这样无论躯干如何倾斜，四肢的绝对方向都由关键点精确决定，且与肢体长度无关。
+const _dir = new THREE.Quaternion();
+function worldQOf(defVec, dirVec) {
+  return new THREE.Quaternion().setFromUnitVectors(defVec, dirVec.clone().normalize());
+}
+function solveLocal(parentWorldQ, childWorldQ, targetKey) {
+  targetQ[targetKey].copy(parentWorldQ).invert().multiply(childWorldQ);
+}
+
+// 主映射函数：landmarks 为 MediaPipe 33 点（含 visibility）。
+// 热路径零分配：所有向量/四元数复用预分配缓冲，避免 60fps 下的 GC 抖动。
+const _P = Array.from({ length:33 }, () => new THREE.Vector3()); // 变换后的 33 点
+const _shC = new THREE.Vector3(), _nd = new THREE.Vector3();
+const _W = Array.from({ length:15 }, () => new THREE.Quaternion()); // 各骨骼世界四元数
+function wqInto(def, dx, dy, dz, out) {
+  const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (len < 1e-6) return false; // 退化向量，保持上一帧目标
+  _nd.set(dx / len, dy / len, dz / len);
+  out.setFromUnitVectors(def, _nd);
+  return true;
+}
+function updatePoseFromLandmarks(lm) {
+  if (!lm || lm.length < 33) return;
+  const gv = i => (lm[i].visibility === undefined ? 1 : lm[i].visibility);
+  if ((gv(11) + gv(12) + gv(23) + gv(24)) / 4 < 0.4) return; // 关键点不可见，保持上一姿态
+
+  // 坐标系转换：以髋部中心为原点，镜像 x / 翻转 y / 深度阻尼
+  const hx = (lm[23].x + lm[24].x) / 2, hy = (lm[23].y + lm[24].y) / 2, hz = (lm[23].z + lm[24].z) / 2;
+  for (let i = 0; i < 33; i++) {
+    _P[i].set(-(lm[i].x - hx), -(lm[i].y - hy), -(lm[i].z - hz) * 0.6);
+  }
+  const pLSh = _P[11], pRSh = _P[12], pLHip = _P[23], pRHip = _P[24];
+  _shC.addVectors(pLSh, pRSh).multiplyScalar(0.5);
+
+  // 以肩宽为参考的相对空间缩放（自适应人物在画面中的远近）
+  const lmShoulderW = Math.max(pLSh.distanceTo(pRSh), 1e-4);
+  const s = BASE.shoulderDist * activeParams().shoulderWid / lmShoulderW;
+  scaleSmooth += (s - scaleSmooth) * 0.15;
+
+  // --- 躯干（脊柱方向：髋中心 → 肩中心；上脊柱局部为单位阵，避免双重弯曲）---
+  let spineOk = wqInto(UP, _shC.x, _shC.y, _shC.z, _W[0]);
+  if (spineOk) {
+    targetQ.spineLower.copy(_W[0]);
+    targetQ.spineUpper.identity();
+    // --- 颈 / 头（肩中心 → 鼻尖）---
+    if (wqInto(UP, _P[0].x - _shC.x, _P[0].y - _shC.y, _P[0].z - _shC.z, _W[2]))
+      solveLocal(_W[0], _W[2], 'neck');
+  }
+  // --- 手臂（父链：胸廓 → 肩 → 上臂 → 前臂 → 手）---
+  if (wqInto(DOWN, _P[13].x - pLSh.x, _P[13].y - pLSh.y, _P[13].z - pLSh.z, _W[3]) && spineOk)
+    solveLocal(_W[0], _W[3], 'uArmL');
+  if (wqInto(DOWN, _P[15].x - _P[13].x, _P[15].y - _P[13].y, _P[15].z - _P[13].z, _W[4]))
+    solveLocal(_W[3], _W[4], 'lArmL');
+  if (wqInto(DOWN, _P[19].x - _P[15].x, _P[19].y - _P[15].y, _P[19].z - _P[15].z, _W[5]))
+    solveLocal(_W[4], _W[5], 'handL');
+  if (wqInto(DOWN, _P[14].x - pRSh.x, _P[14].y - pRSh.y, _P[14].z - pRSh.z, _W[6]) && spineOk)
+    solveLocal(_W[0], _W[6], 'uArmR');
+  if (wqInto(DOWN, _P[16].x - _P[14].x, _P[16].y - _P[14].y, _P[16].z - _P[14].z, _W[7]))
+    solveLocal(_W[6], _W[7], 'lArmR');
+  if (wqInto(DOWN, _P[20].x - _P[16].x, _P[20].y - _P[16].y, _P[20].z - _P[16].z, _W[8]))
+    solveLocal(_W[7], _W[8], 'handR');
+  // --- 腿（父链：根 → 髋 → 大腿 → 小腿 → 脚）---
+  if (wqInto(DOWN, _P[25].x - pLHip.x, _P[25].y - pLHip.y, _P[25].z - pLHip.z, _W[9]))
+    targetQ.thighL.copy(_W[9]);
+  if (wqInto(DOWN, _P[27].x - _P[25].x, _P[27].y - _P[25].y, _P[27].z - _P[25].z, _W[10]))
+    solveLocal(_W[9], _W[10], 'shinL');
+  if (wqInto(FWD, _P[31].x - _P[27].x, _P[31].y - _P[27].y, _P[31].z - _P[27].z, _W[11]))
+    solveLocal(_W[10], _W[11], 'footL');
+  if (wqInto(DOWN, _P[26].x - pRHip.x, _P[26].y - pRHip.y, _P[26].z - pRHip.z, _W[12]))
+    targetQ.thighR.copy(_W[12]);
+  if (wqInto(DOWN, _P[28].x - _P[26].x, _P[28].y - _P[26].y, _P[28].z - _P[26].z, _W[13]))
+    solveLocal(_W[12], _W[13], 'shinR');
+  if (wqInto(FWD, _P[32].x - _P[28].x, _P[32].y - _P[28].y, _P[32].z - _P[28].z, _W[14]))
+    solveLocal(_W[13], _W[14], 'footR');
+
+  // --- 根节点位置：髋部中心决定 XZ，Y 由腿长基线 + 髋部相对位移决定 ---
+  const baseY = curLegHeight;
+  let ry = baseY;
+  if (calibHipY !== null) ry = baseY + (calibHipY - hy) * scaleSmooth;
+  ry = Math.min(Math.max(ry, baseY * 0.45), baseY * 1.8);
+  rootTarget.set(
+    Math.min(Math.max(-(hx - 0.5) * scaleSmooth, -1.2), 1.2),
+    ry,
+    Math.min(Math.max(-hz * scaleSmooth * 0.5, -0.8), 0.8)
+  );
+}
+
+/* ================================================================
+   6. 帧缓冲采样（时间轴线性插值，保证 60fps 平滑驱动）
+================================================================ */
+function sampleFrames(frames, t, out) {
+  if (!frames || frames.length === 0) return null;
+  if (t <= frames[0].time) return frames[0].landmarks;
+  const last = frames[frames.length - 1];
+  if (t >= last.time) return last.landmarks; // 超过最新帧则使用最新可用帧
+  let lo = 0, hi = frames.length - 1;
+  while (lo < hi - 1) { const mid = (lo + hi) >> 1; if (frames[mid].time <= t) lo = mid; else hi = mid; }
+  const a = frames[lo], b = frames[hi];
+  const span = Math.max(b.time - a.time, 1e-6);
+  const k = Math.min(Math.max((t - a.time) / span, 0), 1);
+  // 复用输出缓冲，避免渲染热循环中的内存分配（防 GC 卡顿）
+  for (let i = 0; i < 33; i++) {
+    const A = a.landmarks[i], B = b.landmarks[i], O = out[i];
+    O.x = A.x + (B.x - A.x) * k;
+    O.y = A.y + (B.y - A.y) * k;
+    O.z = A.z + (B.z - A.z) * k;
+    O.visibility = Math.min(A.visibility !== undefined ? A.visibility : 1, B.visibility !== undefined ? B.visibility : 1);
+  }
+  return out;
+}
+const _sampleMain = Array.from({ length:33 }, () => ({ x:0, y:0, z:0, visibility:1 }));
+const _fusA = Array.from({ length:33 }, () => ({ x:0, y:0, z:0, visibility:1 }));
+const _fusB = Array.from({ length:33 }, () => ({ x:0, y:0, z:0, visibility:1 }));
+
+/* ================================================================
+   7. 人形检测引擎（双引擎架构，参考 FreeMoCap 等开源动捕方案）
+   主引擎：MediaPipe Tasks Vision PoseLandmarker —— BlazePose GHUM Heavy 模型、
+          GPU 委托、numPoses=3 原生多人检测、VIDEO 模式内部时序跟踪。
+   降级引擎：旧版 @mediapipe/pose（单人），主引擎加载失败时自动兜底。
+================================================================ */
+let landmarker = null, engine = null; // 'tasks' | 'legacy'
+let legacyPending = null;             // 旧版引擎的挂起 Promise
+let firstFrameMode = false;
+
+function engineName() {
+  return engine === 'tasks' ? 'PoseLandmarker Heavy' : (engine === 'legacy' ? '旧版 Pose' : '未加载');
+}
+let legacyStarted = false;
+function startLegacyEngine() { // --- 旧版 Pose（jsdelivr 托管，国内可访问性好；仅作兜底）---
+  if (legacyStarted) return; legacyStarted = true;
+  (async () => {
+    try {
+      pose = new Pose({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });
+      pose.setOptions({ modelComplexity:1, smoothLandmarks:true, enableSegmentation:false,
+        minDetectionConfidence:0.3, minTrackingConfidence:0.3 });
+      pose.onResults(onPoseResults);
+      await pose.initialize();
+      if (!poseReady) { engine = 'legacy'; poseReady = true; onEngineReady(); }
+      else if (!engine) engine = 'legacy';
+    } catch (e) {
+      if (!poseReady && engine !== 'tasks') {
+        engine = null;
+        if (currentState === 'EMPTY' || currentState === 'VIDEO_LOADED')
+          setStatus('检测引擎加载失败，请检查网络后刷新页面');
+      }
+    }
+  })();
+}
+function initPose() {
+  // 串行加载策略（关键）：两个引擎的 WASM 均基于 Emscripten，旧版 Pose 启动期会
+  // 读写全局 Module，若与 tasks-vision 的 WASM 启动期重叠会互相破坏（偶发双双崩溃）。
+  // 因此必须先加载 PoseLandmarker Heavy，失败或超时后才启动旧版引擎兜底。
+  let tasksSettled = false;
+  (async () => { // --- Tasks Vision PoseLandmarker（Heavy，精度更高，原生多人）---
+    try {
+      const tv = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+      const vision = await tv.FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+      const MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task';
+      const mk = delegate => tv.PoseLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: MODEL, delegate: delegate },
+        runningMode: 'VIDEO', numPoses: 3,
+        minPoseDetectionConfidence: 0.3, minPosePresenceConfidence: 0.3, minTrackingConfidence: 0.3
+      });
+      try { landmarker = await mk('GPU'); }
+      catch (e1) { landmarker = await mk('CPU'); } // GPU 不可用时降级 CPU
+      tasksSettled = true;
+      engine = 'tasks'; poseReady = true; // Heavy 就绪（若旧版已兜底运行，则升级为平滑切换）
+      onEngineReady();
+    } catch (e) {
+      tasksSettled = true;
+      console.warn('PoseLandmarker 加载失败，改用旧版引擎：', e);
+      startLegacyEngine();
+    }
+  })();
+  // 超时兜底：40 秒内 Heavy 未就绪则先启动旧版引擎，保证用户可用；Heavy 随后就绪会自动接管
+  setTimeout(() => { if (!tasksSettled && !poseReady) startLegacyEngine(); }, 40000);
+}
+// 引擎就绪回调：若用户已导入视频但尚未检测，自动补跑检测流程
+function onEngineReady() {
+  if (currentState === 'EMPTY') setStatus('等待导入视频');
+  if (currentState === 'VIDEO_LOADED' && !firstFrameDone && !firstFrameMode) runFirstFrameDetection();
+}
+function onPoseResults(results) { // 旧版引擎回调 → 桥接为 Promise
+  poseBusy = false;
+  const r = legacyPending; legacyPending = null;
+  if (r) r(results.poseLandmarks ? [normPose(results.poseLandmarks)] : []);
+}
+
+// 降采样取帧：推理输入限宽，大幅提升检测速度（关键点为归一化坐标，与分辨率无关）
+const probeCanvas = document.createElement('canvas');
+const probeCtx = probeCanvas.getContext('2d');
+function captureFrame(maxW) {
+  const vw = videoEl.videoWidth || 640, vh = videoEl.videoHeight || 360;
+  const s = Math.min(1, maxW / vw);
+  probeCanvas.width = Math.max(2, Math.round(vw * s));
+  probeCanvas.height = Math.max(2, Math.round(vh * s));
+  probeCtx.drawImage(videoEl, 0, 0, probeCanvas.width, probeCanvas.height);
+  return probeCanvas;
+}
+
+function normPose(lms) {
+  return lms.map(p => ({ x:p.x, y:p.y, z:p.z || 0, visibility:p.visibility !== undefined ? p.visibility : 1 }));
+}
+// 统一检测接口：Promise<poses[]>，每个 pose 为 33 点数组，原生支持多人
+function detectPoses(image) {
+  if (engine === 'tasks' && landmarker) {
+    try {
+      const res = landmarker.detectForVideo(image, performance.now());
+      return Promise.resolve((res.landmarks || []).map(normPose));
+    } catch (e) { return Promise.resolve([]); }
+  }
+  if (engine === 'legacy' && pose) {
+    return new Promise(res => {
+      legacyPending = res; poseBusy = true;
+      pose.send({ image }).catch(() => {
+        poseBusy = false;
+        if (legacyPending) { legacyPending = null; res([]); }
+      });
+    });
+  }
+  return Promise.resolve([]);
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function detectWithTimeout(image, ms) {
+  return Promise.race([detectPoses(image), new Promise(res => setTimeout(() => res(null), ms))]);
+}
+function seekTo(t) {
+  return new Promise(res => {
+    if (Math.abs(videoEl.currentTime - t) < 0.04) return res();
+    let done = false;
+    const finish = () => { if (!done) { done = true; videoEl.removeEventListener('seeked', finish); res(); } };
+    videoEl.addEventListener('seeked', finish);
+    videoEl.currentTime = t;
+    setTimeout(finish, 3000);
+  });
+}
+
+function hipCenterOf(lm) {
+  return { x:(lm[23].x + lm[24].x) / 2, y:(lm[23].y + lm[24].y) / 2 };
+}
+function bboxOf(lm) {
+  let minX = 1, minY = 1, maxX = 0, maxY = 0;
+  lm.forEach(p => {
+    if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+  });
+  return { x:minX, y:minY, w:maxX - minX, h:maxY - minY };
+}
+
+// 录制中追踪：多人结果按髋部中心最近邻匹配，丢失后自动放宽阈值重新捕获
+function handleTrackingFrame(poses) {
+  let target = null, bestD = Infinity;
+  if (poses && poses.length) {
+    poses.forEach(p => {
+      const c = hipCenterOf(p);
+      const d = lastTargetHip ? Math.hypot(c.x - lastTargetHip.x, c.y - lastTargetHip.y) : 0;
+      if (d < bestD) { bestD = d; target = p; }
+    });
+    const threshold = lostFrames > 0 ? 0.6 : 0.35;
+    if (target && bestD > threshold && lostFrames <= 45) target = null;
+  }
+  if (target) {
+    lostFrames = 0; lostSince = null;
+    // 指数平滑（0.7 新值权重），抑制关键点抖动
+    const prev = frameBuffer.length ? frameBuffer[frameBuffer.length - 1].landmarks : null;
+    const smoothed = prev ? target.map((p, i) => ({
+      x: p.x * 0.7 + prev[i].x * 0.3,
+      y: p.y * 0.7 + prev[i].y * 0.3,
+      z: p.z * 0.7 + prev[i].z * 0.3,
+      visibility: p.visibility !== undefined ? p.visibility : 1
+    })) : target;
+    lastTargetHip = hipCenterOf(smoothed);
+    lastValidLandmarks = smoothed;
+    frameBuffer.push({ time: videoEl.currentTime, landmarks: smoothed });
+    drawTrackingBox(smoothed, true);
+    if (frameBuffer.length % 30 === 0) updateRecordingStatus();
+  } else {
+    // 追踪丢失：保持上一帧姿态
+    lostFrames++;
+    if (lostFrames === 5) setStatus('追踪丢失，尝试恢复…');
+    if (lostFrames >= 5 && !lostSince) lostSince = performance.now();
+    if (lostSince && performance.now() - lostSince > 3000) {
+      setStatus('追踪失败，建议停止并重新导入');
+      toast('追踪失败超过 3 秒，建议停止并重新导入', 'error');
+      lostSince = performance.now() + 1e9; // 防止重复提示
+    }
+  }
+}
+
+function selectPerson(idx) {
+  selectedPersonIdx = idx;
+  trackingLocked = true;
+  const person = detectedPersons[idx];
+  lastTargetHip = hipCenterOf(person.landmarks);
+  calibHipY = lastTargetHip.y;
+  lastValidLandmarks = person.landmarks;
+  lostFrames = 0; lostSince = null;
+}
+
+/* ---------------- Overlay Canvas 绘制 ---------------- */
+const overlayCanvas = document.getElementById('overlayCanvas');
+const octx = overlayCanvas.getContext('2d');
+function resizeOverlay() {
+  const wrap = document.getElementById('videoWrap');
+  overlayCanvas.width = wrap.clientWidth || 1;
+  overlayCanvas.height = wrap.clientHeight || 1;
+}
+// 视频原始坐标 → overlay 坐标（object-fit: contain 换算）
+function videoToOverlay() {
+  const vw = videoEl.videoWidth || 1, vh = videoEl.videoHeight || 1;
+  const cw = overlayCanvas.width, ch = overlayCanvas.height;
+  const s = Math.min(cw / vw, ch / vh);
+  return { s, ox:(cw - vw * s) / 2, oy:(ch - vh * s) / 2 };
+}
+function drawBox(box, color, label) {
+  const { s, ox, oy } = videoToOverlay();
+  const vw = videoEl.videoWidth || 1, vh = videoEl.videoHeight || 1;
+  const x = ox + box.x * vw * s, y = oy + box.y * vh * s, w = box.w * vw * s, h = box.h * vh * s;
+  octx.strokeStyle = color; octx.lineWidth = 2;
+  octx.strokeRect(x, y, w, h);
+  if (label) {
+    octx.font = '13px sans-serif';
+    const tw = octx.measureText(label).width + 10;
+    octx.fillStyle = color;
+    octx.fillRect(x, Math.max(y - 20, 0), tw, 18);
+    octx.fillStyle = '#0a0a0f';
+    octx.fillText(label, x + 5, Math.max(y - 7, 13));
+  }
+}
+function drawDetectionBoxes() {
+  resizeOverlay();
+  octx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  detectedPersons.forEach((p, i) => {
+    const selected = (i === selectedPersonIdx && trackingLocked);
+    drawBox(p.box, selected ? '#00ff88' : '#00d4ff', p.label);
+  });
+}
+function drawTrackingBox(lm, green) {
+  octx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  drawBox(bboxOf(lm), green ? '#00ff88' : '#00d4ff', 'Person ' + (selectedPersonIdx + 1));
+}
+function clearOverlay() { octx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height); }
+
+// overlay 点击选择追踪目标（多人时）
+overlayCanvas.addEventListener('click', e => {
+  if (currentState !== 'VIDEO_LOADED' || detectedPersons.length === 0) return;
+  const rect = overlayCanvas.getBoundingClientRect();
+  const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+  const { s, ox, oy } = videoToOverlay();
+  const vw = videoEl.videoWidth || 1, vh = videoEl.videoHeight || 1;
+  for (let i = 0; i < detectedPersons.length; i++) {
+    const b = detectedPersons[i].box;
+    const x = ox + b.x * vw * s, y = oy + b.y * vh * s, w = b.w * vw * s, h = b.h * vh * s;
+    if (cx >= x && cx <= x + w && cy >= y && cy <= y + h) {
+      selectPerson(i);
+      drawDetectionBoxes();
+      setStatus(`正在追踪：Person ${i + 1} · 点击「播放」开始提取动作`);
+      updateButtons();
+      return;
+    }
+  }
+});
+
+/* ================================================================
+   8. 视频事件系统（导入 / 播放 / 停止 / 弹出）
+================================================================ */
+const videoEl = document.getElementById('videoEl');
+const fileInput = document.getElementById('fileInput');
+let pendingImportMode = 'normal'; // normal | correction
+const MAX_DURATION = 300, WARN_SIZE = 200 * 1024 * 1024;
+
+function handleVideoFile(file) {
+  if (!file) return;
+  if (!file.type.startsWith('video/') && !/\.(mp4|mov|webm)$/i.test(file.name)) {
+    toast('请选择视频文件（MP4 / MOV / WEBM）', 'error'); return;
+  }
+  if (file.size > WARN_SIZE) toast('文件超过 200MB，处理可能较慢', 'warn');
+  const url = URL.createObjectURL(file);
+  videoEl.src = url;
+  videoEl.load();
+}
+videoEl.addEventListener('loadedmetadata', () => {
+  if (videoEl.duration > MAX_DURATION) {
+    toast('视频时长超过 5 分钟，已拒绝导入', 'error');
+    ejectVideo();
+    return;
+  }
+  if (pendingImportMode === 'correction') enterCorrectionLoaded();
+  else enterVideoLoaded();
+});
+// 首帧就绪后进行静态人形检测
+videoEl.addEventListener('loadeddata', () => {
+  videoEl.pause();
+  resizeOverlay();
+});
+/* 第一帧静态检测流程（异步管线）：
+   1. 等待检测引擎就绪（最多 60 秒，状态栏实时提示）
+   2. 校验视频可解码（排除 HEVC/H.265 等浏览器无法解码的封装）
+   3. 5 个时间点采样（0/15/30/45/60%），高分辨率逐点检测，任一点检出即完成 */
+let firstFrameDone = false;
+async function runFirstFrameDetection() {
+  if (firstFrameMode || firstFrameDone) return;
+  firstFrameMode = true;
+  // 1. 引擎就绪等待（Heavy 模型约 30MB，首次加载需下载；浏览器会缓存）
+  setStatus('正在加载检测引擎（首次需下载约 30MB 模型）…');
+  const t0 = performance.now();
+  while (!poseReady && performance.now() - t0 < 120000) await sleep(500);
+  if (!poseReady) {
+    firstFrameMode = false; firstFrameDone = true;
+    setStatus('检测引擎加载失败，请检查网络后刷新页面');
+    toast('检测引擎加载失败：模型需从 CDN 下载，请检查网络后刷新', 'error');
+    updateButtons();
+    return;
+  }
+  // 2. 可解码性校验
+  const t1 = performance.now();
+  while (videoEl.readyState < 2 && performance.now() - t1 < 8000) await sleep(200);
+  if (videoEl.readyState < 2 || !videoEl.videoWidth) {
+    firstFrameMode = false; firstFrameDone = true;
+    setStatus('视频无法解码，请重新导入');
+    toast('视频无法解码（可能为 HEVC/H.265 编码），请转码为 H.264 的 MP4 后重试', 'error');
+    updateButtons();
+    return;
+  }
+  // 3. 多时间点采样检测
+  const dur = isFinite(videoEl.duration) ? videoEl.duration : 0;
+  const samples = [...new Set([0, 0.15, 0.3, 0.45, 0.6]
+    .map(f => Math.round(Math.min(Math.max(dur * f, 0), Math.max(dur - 0.05, 0)) * 100) / 100))];
+  for (let i = 0; i < samples.length; i++) {
+    if (!firstFrameMode || currentState !== 'VIDEO_LOADED') return;
+    setStatus(`正在进行人形检测…（采样点 ${i + 1}/${samples.length} · ${engineName()}）`);
+    await seekTo(samples[i]);
+    const poses = await detectWithTimeout(captureFrame(1280), 12000); // 高分辨率提升检出率
+    if (poses && poses.length) { onPersonsDetected(poses); return; }
+  }
+  firstFrameMode = false; firstFrameDone = true;
+  detectedPersons = []; trackingLocked = false;
+  setStatus('未检测到人体，请重新导入');
+  toast('多个采样点均未检测到人体。建议：人物全身入镜、占画面 1/3 以上、光线充足', 'warn');
+  drawDetectionBoxes();
+  updateButtons();
+}
+function onPersonsDetected(poses) {
+  // 原生多人结果：青色方框标出每个人体，单人自动锁定
+  detectedPersons = poses.slice(0, 5).map((lms, i) => ({ landmarks:lms, box:bboxOf(lms), label:'Person ' + (i + 1) }));
+  firstFrameMode = false; firstFrameDone = true;
+  if (detectedPersons.length === 1) {
+    selectPerson(0);
+    setStatus('已锁定追踪目标：Person 1 · 点击「播放」开始提取动作');
+  } else {
+    setStatus(`检测到 ${detectedPersons.length} 个人体，请点击方框选择追踪目标`);
+  }
+  drawDetectionBoxes();
+  updateButtons();
+}
+
+function enterVideoLoaded() {
+  currentState = 'VIDEO_LOADED';
+  firstFrameDone = false; firstFrameMode = false;
+  trackingLocked = false; detectedPersons = []; selectedPersonIdx = -1;
+  lastTargetHip = null; calibHipY = null; lostFrames = 0; lostSince = null;
+  frameBuffer = [];
+  showLeftPanel('video');
+  videoEl.currentTime = 0;
+  setStatus('视频已加载，正在进行人形检测…');
+  applyBodyParams(activeParams()); updateRootBaseY();
+  // 部分浏览器 seeked 不触发，兜底延迟检测
+  setTimeout(() => { if (currentState === 'VIDEO_LOADED' && !firstFrameDone && !firstFrameMode) runFirstFrameDetection(); }, 600);
+  updateButtons();
+}
+
+// 播放 → 进入 RECORDING（或修正提取）
+function startPlayback() {
+  if (currentState !== 'VIDEO_LOADED' && !correctionMode) return;
+  if (!trackingLocked) { toast('请先选择追踪目标', 'warn'); return; }
+  videoEl.currentTime = 0;
+  frameBuffer = [];
+  lastTargetHip = detectedPersons[selectedPersonIdx] ? hipCenterOf(detectedPersons[selectedPersonIdx].landmarks) : lastTargetHip;
+  calibHipY = lastTargetHip ? lastTargetHip.y : null;
+  lastValidLandmarks = detectedPersons[selectedPersonIdx] ? detectedPersons[selectedPersonIdx].landmarks : null;
+  lostFrames = 0; lostSince = null;
+  firstFrameMode = false;
+  currentState = 'RECORDING';
+  setStatus(correctionMode ? '修正模式：正在提取新记录…' : '正在追踪并记录动作…');
+  updateButtons();
+  videoEl.play().catch(() => toast('视频播放失败', 'error'));
+  poseLoop();
+}
+// 录制追踪循环：异步逐帧推理（目标约 30fps），多人结果由 handleTrackingFrame 匹配
+async function poseLoop() {
+  while (currentState === 'RECORDING') {
+    if (videoEl.paused || videoEl.ended || !poseReady || videoEl.readyState < 2) { await sleep(60); continue; }
+    const t0 = performance.now();
+    const poses = await detectWithTimeout(captureFrame(640), 5000);
+    if (currentState !== 'RECORDING') break;
+    if (poses) handleTrackingFrame(poses);
+    const elapsed = performance.now() - t0;
+    if (elapsed < 30) await sleep(30 - elapsed);
+  }
+}
+function updateRecordingStatus() {
+  setStatus((correctionMode ? '修正提取中' : '正在追踪：Person ' + (selectedPersonIdx + 1)) +
+    ` · 已记录 ${frameBuffer.length} 帧 · ${videoEl.currentTime.toFixed(1)}s`);
+}
+
+// 停止（手动或自然结束）→ 无条件自动保存 → 弹出视频 → RECORD_SAVED
+function stopRecording() {
+  if (currentState !== 'RECORDING') return;
+  videoEl.pause();
+  const buf = frameBuffer.slice();
+  if (correctionMode) {
+    correctionBuffer = buildRecord(buf);
+    ejectVideo();
+    currentState = 'RECORD_SAVED';
+    showLeftPanel('record');
+    openFusionModal();
+  } else {
+    savedRecord = buildRecord(buf);
+    frameBuffer = [];
+    ejectVideo();
+    currentState = 'RECORD_SAVED';
+    subState = 'ORIGINAL';
+    showLeftPanel('record');
+    fillRecordInfo();
+    toast('动作记录已自动保存', '');
+    startReplay(true); // 保存后自动预览
+  }
+  updateButtons();
+}
+videoEl.addEventListener('ended', () => { if (currentState === 'RECORDING') stopRecording(); });
+
+function buildRecord(frames) {
+  const dur = frames.length ? frames[frames.length - 1].time : 0;
+  return {
+    version: 2,
+    created_at: new Date().toISOString(),
+    gender: currentGender,
+    duration_seconds: Math.round(dur * 1000) / 1000,
+    fps: 30,
+    frames: frames.map(f => ({
+      time: Math.round(f.time * 1000) / 1000,
+      landmarks: f.landmarks.map(p => ({
+        x: round4(p.x), y: round4(p.y), z: round4(p.z),
+        visibility: round4(p.visibility !== undefined ? p.visibility : 1)
+      }))
+    }))
+  };
+}
+function round4(v) { return Math.round(v * 10000) / 10000; }
+
+// 视频弹出（规范 7.2）
+function ejectVideo() {
+  videoEl.pause();
+  videoEl.src = '';
+  videoEl.load();
+  fileInput.value = '';
+  clearOverlay();
+  detectedPersons = []; selectedPersonIdx = -1; trackingLocked = false;
+}
+
+// 删除已导入但未播放的视频 → EMPTY
+function deleteVideo() {
+  ejectVideo();
+  frameBuffer = [];
+  currentState = 'EMPTY';
+  showLeftPanel('empty');
+  setStatus('等待导入视频');
+  setTPoseTargets(); updateRootBaseY();
+  updateButtons();
+}
+
+/* ================================================================
+   9. 记录管理（单记录限制 / 删除 / 导出导入 JSON）
+================================================================ */
+function deleteRecord() {
+  openConfirm('确定删除当前动作记录？此操作不可恢复。', () => {
+    savedRecord = null;
+    frameBuffer = [];
+    correctionBuffer = null; correctionMode = false;
+    stopReplay();
+    subState = 'ORIGINAL';
+    currentState = 'EMPTY';
+    setTPoseTargets();
+    applyBodyParams(GENDER_DEFAULTS[currentGender]);
+    rootTarget.set(0, curLegHeight, 0);
+    model.root.position.set(0, curLegHeight, 0);
+    showLeftPanel('empty');
+    setStatus('等待导入视频');
+    updateButtons();
+    toast('记录已删除', '');
+  });
+}
+function exportRecord() {
+  if (!savedRecord) return;
+  downloadBlob(new Blob([JSON.stringify(savedRecord)], { type:'application/json' }),
+    `mocap_record_${Date.now()}.json`);
+}
+function loadRecordFile(file) {
+  if (!file) return;
+  if (savedRecord) { toast('当前已存在动作记录，请先删除记录后再导入新记录', 'warn'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const rec = JSON.parse(reader.result);
+      if (!rec.frames || !Array.isArray(rec.frames) || rec.frames.length === 0) throw 0;
+      // 兼容缺省字段：时长缺失时取末帧时间
+      if (!rec.duration_seconds || !isFinite(rec.duration_seconds))
+        rec.duration_seconds = rec.frames[rec.frames.length - 1].time || 0.001;
+      savedRecord = rec;
+      replay.time = 0; replay.playing = false;
+      currentState = 'RECORD_SAVED'; subState = 'ORIGINAL';
+      showLeftPanel('record'); fillRecordInfo();
+      applyBodyParams(activeParams());
+      syncReplayUI();
+      setStatus(`记录已加载：共 ${rec.frames.length} 帧`);
+      updateButtons();
+    } catch (e) { toast('记录文件格式无效', 'error'); }
+  };
+  reader.readAsText(file);
+}
+function fillRecordInfo() {
+  if (!savedRecord) return;
+  const dur = (savedRecord.duration_seconds && isFinite(savedRecord.duration_seconds))
+    ? savedRecord.duration_seconds
+    : (savedRecord.frames.length ? savedRecord.frames[savedRecord.frames.length - 1].time : 0);
+  savedRecord.duration_seconds = dur;
+  document.getElementById('infoDuration').textContent = dur.toFixed(3) + ' 秒';
+  document.getElementById('infoFrames').textContent = savedRecord.frames.length + ' 帧';
+  document.getElementById('infoCreated').textContent = new Date(savedRecord.created_at).toLocaleString();
+  document.getElementById('infoGender').textContent = savedRecord.gender === 'female' ? '女模' : '男模';
+  setStatus(`记录已保存：共 ${savedRecord.frames.length} 帧 · 时长 ${savedRecord.duration_seconds.toFixed(1)}s`);
+}
+
+/* ================================================================
+   10. 记录回放（播放/暂停/进度拖拽/0.5x-2x 变速）
+================================================================ */
+function startReplay(autoplay) {
+  if (!savedRecord) return;
+  replay.time = 0;
+  replay.playing = autoplay !== false;
+  document.getElementById('btnReplayPlay').textContent = replay.playing ? '暂停' : '播放';
+}
+function stopReplay() {
+  replay.playing = false; replay.time = 0;
+  const b = document.getElementById('btnReplayPlay');
+  if (b) b.textContent = '播放';
+  syncReplayUI();
+}
+function syncReplayUI() {
+  if (!savedRecord) return;
+  const dur = savedRecord.duration_seconds || 0.001;
+  document.getElementById('replayProgress').value = Math.round(replay.time / dur * 1000);
+  document.getElementById('replayTime').textContent =
+    replay.time.toFixed(2) + ' / ' + dur.toFixed(2) + 's';
+}
+
+/* ================================================================
+   11. 多视频修正（数据融合）
+================================================================ */
+function enterCorrectionMode() {
+  if (!savedRecord) return;
+  pendingImportMode = 'correction';
+  fileInput.click();
+}
+function enterCorrectionLoaded() {
+  correctionMode = true;
+  stopReplay();
+  currentState = 'VIDEO_LOADED'; // 复用加载/检测流程，但属于 RECORD_SAVED 的临时修正分支
+  firstFrameDone = false; firstFrameMode = false;
+  trackingLocked = false; detectedPersons = []; selectedPersonIdx = -1;
+  lastTargetHip = null; calibHipY = null;
+  frameBuffer = [];
+  showLeftPanel('video');
+  videoEl.currentTime = 0;
+  setStatus('修正视频已加载，正在进行人形检测…');
+  setTimeout(() => { if (currentState === 'VIDEO_LOADED' && !firstFrameDone && !firstFrameMode) runFirstFrameDetection(); }, 600);
+  updateButtons();
+}
+function cancelCorrection() {
+  correctionMode = false; correctionBuffer = null;
+  frameBuffer = [];
+  ejectVideo();
+  currentState = 'RECORD_SAVED';
+  showLeftPanel('record'); fillRecordInfo();
+  updateButtons();
+  toast('已取消修正', '');
+}
+// 时间戳对齐 + 加权平均
+function alignAndMerge(recA, recB, w1) {
+  const w2 = 1 - w1;
+  const dur = Math.max(recA.duration_seconds, recB.duration_seconds);
+  const step = 1 / 30;
+  const frames = [];
+  for (let t = 0; t <= dur + 1e-6; t += step) {
+    const la = sampleFrames(recA.frames, t, _fusA), lb = sampleFrames(recB.frames, t, _fusB);
+    if (!la && !lb) continue;
+    const A = la || lb, B = lb || la;
+    const lms = new Array(33);
+    for (let i = 0; i < 33; i++) {
+      lms[i] = {
+        x: round4(A[i].x * w1 + B[i].x * w2),
+        y: round4(A[i].y * w1 + B[i].y * w2),
+        z: round4(A[i].z * w1 + B[i].z * w2),
+        visibility: round4(Math.min(A[i].visibility !== undefined ? A[i].visibility : 1,
+                                    B[i].visibility !== undefined ? B[i].visibility : 1))
+      };
+    }
+    frames.push({ time: Math.round(t * 1000) / 1000, landmarks: lms });
+  }
+  return {
+    version: 2,
+    created_at: new Date().toISOString(),
+    gender: recA.gender,
+    duration_seconds: Math.round(dur * 1000) / 1000,
+    fps: 30,
+    frames: frames
+  };
+}
+function openFusionModal() {
+  document.getElementById('fusionSliders').classList.remove('hidden');
+  document.getElementById('weightA').value = 0.5;
+  document.getElementById('weightB').value = 0.5;
+  updateWeightLabels();
+  openModal('融合设置', '按时间戳对齐原记录与新记录（线性插值补齐缺失时间点），对每个关键点的 x/y/z 做加权平均。', '融合生成', () => {
+    const w1 = parseFloat(document.getElementById('weightA').value);
+    savedRecord = alignAndMerge(savedRecord, correctionBuffer, w1);
+    correctionBuffer = null; correctionMode = false;
+    frameBuffer = [];
+    showLeftPanel('record'); fillRecordInfo();
+    updateButtons();
+    toast('融合完成，已覆盖原记录', '');
+    startReplay(true); // 回放预览融合结果
+  }, () => { cancelCorrection(); });
+}
+function updateWeightLabels() {
+  document.getElementById('weightAVal').textContent = parseFloat(document.getElementById('weightA').value).toFixed(2);
+  document.getElementById('weightBVal').textContent = parseFloat(document.getElementById('weightB').value).toFixed(2);
+}
+
+/* ================================================================
+   12. 720P / 60fps 视频导出（Canvas 录制）
+================================================================ */
+async function export720PVideo() {
+  if (!savedRecord || exportActive) return;
+  openConfirm('即将从当前视角录制 1280×720@60fps 视频，播放过程中可继续调整角度。', async () => {
+    exportActive = true;
+    setStatus('正在导出 720P 视频…');
+    updateButtons();
+    // 临时设置内部像素为 1280×720（CSS 显示尺寸保持自适应）
+    renderer.setSize(1280, 720, false);
+    camera.aspect = 1280 / 720; camera.updateProjectionMatrix();
+    const stream = renderer.domElement.captureStream(60);
+    let mime = 'video/webm;codecs=vp9';
+    if (!MediaRecorder.isTypeSupported(mime)) mime = 'video/webm;codecs=vp8';
+    if (!MediaRecorder.isTypeSupported(mime)) mime = 'video/webm';
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8000000 });
+    mediaRecorder.ondataavailable = e => { if (e.data.size) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      downloadBlob(new Blob(recordedChunks, { type:'video/webm' }), `mocap_720p_${Date.now()}.webm`);
+      resizeToContainer(); // 恢复窗口自适应尺寸
+      exportActive = false;
+      setStatus(`记录已保存：共 ${savedRecord.frames.length} 帧 · 导出完成`);
+      updateButtons();
+      toast('720P 视频已导出', '');
+    };
+    mediaRecorder.start(200);
+    // 从头回放动作，结束后停止录制
+    replay.time = 0; replay.playing = true;
+    document.getElementById('btnReplayPlay').textContent = '暂停';
+  });
+}
+function downloadBlob(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+/* ================================================================
+   13. UI 状态机（按钮使能 / 面板切换 / 状态文本）
+================================================================ */
+const $ = id => document.getElementById(id);
+let toastTimer = null;
+function toast(msg, type) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'show ' + (type || '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+}
+function setStatus(msg) { $('statusText').textContent = msg; }
+
+let modalOkCb = null, modalCancelCb = null;
+function openModal(title, text, okText, onOk, onCancel) {
+  $('modalTitle').textContent = title;
+  $('modalText').textContent = text;
+  $('modalOk').textContent = okText || '确定';
+  $('modalMask').style.display = 'flex';
+  modalOkCb = onOk || null; modalCancelCb = onCancel || null;
+}
+function openConfirm(text, onOk) { openModal('确认操作', text, '确定', onOk, null); }
+function closeModal() {
+  $('modalMask').style.display = 'none';
+  $('fusionSliders').classList.add('hidden');
+  modalOkCb = null; modalCancelCb = null;
+}
+$('modalOk').addEventListener('click', () => { const cb = modalOkCb; closeModal(); if (cb) cb(); });
+$('modalCancel').addEventListener('click', () => { const cb = modalCancelCb; closeModal(); if (cb) cb(); });
+
+function showLeftPanel(which) {
+  $('dropZone').classList.toggle('hidden', which !== 'empty');
+  $('videoWrap').classList.toggle('hidden', which !== 'video');
+  $('recordPanel').style.display = which === 'record' ? 'block' : 'none';
+}
+
+// 状态机 → UI 的唯一入口：任何状态变化都必须经过这里
+function updateButtons() {
+  const s = currentState;
+  const inCorrection = correctionMode;
+  const locked = s === 'RECORDING' || exportActive;
+
+  // 性别切换：EMPTY / VIDEO_LOADED / RECORD_SAVED 可用；RECORDING 锁定
+  $('genderSwitch').classList.toggle('disabled', locked);
+
+  // 导入视频：仅 EMPTY 可用；RECORD_SAVED 下禁用并给出提示
+  const importBtn = $('btnImport');
+  importBtn.classList.toggle('hidden', inCorrection);
+  importBtn.disabled = !(s === 'EMPTY');
+  importBtn.title = (s === 'RECORD_SAVED') ? '当前已存在动作记录，请先删除记录后再导入新视频' : '';
+
+  // 播放 / 暂停·停止
+  const playBtn = $('btnPlay');
+  if (s === 'RECORDING') {
+    playBtn.textContent = '暂停/停止';
+    playBtn.disabled = false;
+    playBtn.classList.remove('hidden');
+  } else if (s === 'VIDEO_LOADED') {
+    playBtn.textContent = '播放';
+    playBtn.disabled = !trackingLocked;
+    playBtn.classList.remove('hidden');
+  } else {
+    playBtn.textContent = '播放';
+    playBtn.disabled = true;
+    playBtn.classList.toggle('hidden', s === 'RECORD_SAVED');
+  }
+
+  // 删除视频：仅 VIDEO_LOADED（非修正模式与录制中）
+  $('btnDeleteVideo').classList.toggle('hidden', !(s === 'VIDEO_LOADED' && !inCorrection));
+  $('btnDeleteVideo').disabled = locked;
+
+  // 取消修正：修正模式下（加载或提取中）可用
+  $('btnCancelCorrect').classList.toggle('hidden', !inCorrection);
+  $('btnCancelCorrect').disabled = exportActive;
+
+  // RECORD_SAVED 专属按钮组
+  const inSaved = s === 'RECORD_SAVED' && !inCorrection;
+  $('btnCorrection').classList.toggle('hidden', !inSaved);
+  $('btnCustom').classList.toggle('hidden', !inSaved);
+  $('btnExport').classList.toggle('hidden', !inSaved);
+  $('btnDeleteRecord').classList.toggle('hidden', !inSaved);
+  $('btnCorrection').disabled = exportActive;
+  $('btnCustom').disabled = exportActive;
+  $('btnExport').disabled = exportActive;
+  $('btnDeleteRecord').disabled = exportActive;
+  $('btnCustom').textContent = subState === 'CUSTOM' ? '返回原始模特' : '创建自定义模特';
+
+  // 模特身形设定面板：仅 RECORD_SAVED 显示
+  const panel = $('bodyPanel');
+  panel.classList.toggle('hidden', !inSaved && !inCorrection);
+  if (s !== 'RECORD_SAVED') panel.classList.add('collapsed');
+  $('collapseIcon').textContent = panel.classList.contains('collapsed') ? '▶' : '◀';
+  $('subStateTag').textContent = subState === 'CUSTOM' ? '自定义' : '原始';
+  $('panelNote').textContent = subState === 'CUSTOM'
+    ? '自定义模特：全部 37 项参数开放，调节实时生效，记录动作保持不变。'
+    : '原始模特：禁止调节身形。点击「创建自定义模特」进入编辑。';
+  $('customControls').classList.toggle('hidden', subState !== 'CUSTOM');
+  $('btnCustom2').classList.toggle('hidden', subState === 'CUSTOM');
+}
+
+/* ================================================================
+   14. 身形滑块面板（37 个调节点，分组折叠，对称锁定）
+================================================================ */
+function buildSliders() {
+  const host = $('sliderGroups');
+  host.innerHTML = '';
+  PARAM_GROUPS.forEach(g => {
+    const det = document.createElement('details');
+    det.className = 'paramGroup' + (g.side === 'R' ? ' rightGroup' : '');
+    det.open = true;
+    const sum = document.createElement('summary');
+    sum.textContent = g.title;
+    det.appendChild(sum);
+    const body = document.createElement('div');
+    body.className = 'groupBody';
+    g.items.forEach(([label, key, range]) => {
+      const r = range === 'W' ? WIDTH_RANGE : PARAM_RANGES;
+      const row = document.createElement('div');
+      row.className = 'sliderRow';
+      row.innerHTML = `<span class="lbl">${label}</span>
+        <input type="range" min="${r.min}" max="${r.max}" step="${r.step}" data-key="${key}">
+        <span class="val" id="val_${key}"></span>`;
+      const input = row.querySelector('input');
+      input.addEventListener('input', () => {
+        const v = parseFloat(input.value);
+        customParams[key] = v;
+        // 对称锁定：左侧联动右侧
+        if (isSymmetric && key.endsWith('L')) {
+          const rk = key.slice(0, -1) + 'R';
+          customParams[rk] = v;
+          const ri = host.querySelector(`input[data-key="${rk}"]`);
+          if (ri) ri.value = v;
+          $('val_' + rk).textContent = v.toFixed(2);
+        }
+        $('val_' + key).textContent = v.toFixed(2);
+        applyBodyParams(customParams);
+        if (!replay.playing) updateRootBaseY();
+      });
+      body.appendChild(row);
+    });
+    det.appendChild(body);
+    host.appendChild(det);
+  });
+  applySymmetryUI();
+}
+function syncSliders() {
+  document.querySelectorAll('#sliderGroups input[type=range]').forEach(inp => {
+    const k = inp.dataset.key;
+    inp.value = customParams[k];
+    $('val_' + k).textContent = Number(customParams[k]).toFixed(2);
+  });
+}
+function applySymmetryUI() {
+  document.querySelectorAll('#sliderGroups .rightGroup').forEach(el => {
+    el.classList.toggle('rightLocked', isSymmetric);
+  });
+}
+
+/* ================================================================
+   15. 模特配置保存 / 加载（JSON）
+================================================================ */
+function saveModelConfig() {
+  const cfg = { type:'mocap_model_config', gender:currentGender, params:customParams };
+  downloadBlob(new Blob([JSON.stringify(cfg, null, 2)], { type:'application/json' }),
+    `model_config_${Date.now()}.json`);
+}
+function loadModelConfig(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const cfg = JSON.parse(reader.result);
+      if (!cfg.params) throw 0;
+      Object.keys(customParams).forEach(k => {
+        if (typeof cfg.params[k] === 'number') customParams[k] = cfg.params[k];
+      });
+      syncSliders();
+      applyBodyParams(customParams);
+      toast('模特配置已加载', '');
+    } catch (e) { toast('配置文件格式无效', 'error'); }
+  };
+  reader.readAsText(file);
+}
+
+/* ================================================================
+   16. 动画循环（独立 60fps，与 MediaPipe 检测解耦）
+================================================================ */
+let lastFrameTs = performance.now();
+let frameCount = 0;
+function renderLoop() {
+  requestAnimationFrame(renderLoop);
+  const now = performance.now();
+  const dt = Math.min((now - lastFrameTs) / 1000, 0.1);
+  lastFrameTs = now;
+  frameCount++;
+
+  // 回放时间推进
+  if (replay.playing && savedRecord) {
+    replay.time += dt * replay.speed;
+    let ended = false;
+    if (replay.time >= savedRecord.duration_seconds) {
+      replay.time = savedRecord.duration_seconds;
+      replay.playing = false;
+      ended = true;
+      $('btnReplayPlay').textContent = '播放';
+      if (exportActive && mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+    }
+    if (ended || frameCount % 5 === 0) syncReplayUI(); // UI 节流，避免每帧 DOM 写入
+  }
+
+  // 根据状态决定姿态数据源（复用主采样缓冲）
+  if (currentState === 'RECORDING' && frameBuffer.length > 0) {
+    const lm = sampleFrames(frameBuffer, videoEl.currentTime, _sampleMain);
+    if (lm) updatePoseFromLandmarks(lm);
+    else if (lastValidLandmarks) updatePoseFromLandmarks(lastValidLandmarks);
+  } else if (currentState === 'RECORD_SAVED' && savedRecord) {
+    const lm = sampleFrames(savedRecord.frames, replay.time, _sampleMain);
+    if (lm) updatePoseFromLandmarks(lm);
+  }
+  // EMPTY / VIDEO_LOADED：目标为 T-Pose（setTPoseTargets 已设定）
+
+  // SLERP 平滑（因子 0.3）消除抖动
+  Object.keys(targetQ).forEach(k => {
+    if (model[k]) model[k].quaternion.slerp(targetQ[k], 0.3);
+  });
+  model.root.position.lerp(rootTarget, 0.3);
+
+  // 接触阴影跟随模特（离地越高越淡）
+  blobShadow.position.x = model.root.position.x;
+  blobShadow.position.z = model.root.position.z;
+  const lift = Math.max(0, model.root.position.y - curLegHeight);
+  blobShadow.material.opacity = Math.max(0.2, 0.9 - lift * 1.1);
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+/* ================================================================
+   17. UI 事件绑定
+================================================================ */
+// 导入视频（全局锁：已有记录时禁止）
+$('btnImport').addEventListener('click', () => {
+  if (savedRecord) { toast('当前已存在动作记录，请先删除记录后再导入新视频', 'warn'); return; }
+  if (currentState !== 'EMPTY') return;
+  pendingImportMode = 'normal';
+  fileInput.click();
+});
+fileInput.addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (f) handleVideoFile(f);
+});
+// 拖拽上传
+const dropZone = $('dropZone');
+['dragover', 'dragenter'].forEach(ev => document.getElementById('leftPane').addEventListener(ev, e => {
+  e.preventDefault();
+  if (currentState === 'EMPTY' || (currentState === 'RECORD_SAVED' && !savedRecord)) dropZone.classList.add('dragover');
+}));
+['dragleave', 'drop'].forEach(ev => document.getElementById('leftPane').addEventListener(ev, e => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+}));
+document.getElementById('leftPane').addEventListener('drop', e => {
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!f) return;
+  if (savedRecord) { toast('当前已存在动作记录，请先删除记录后再导入新视频', 'warn'); return; }
+  if (currentState !== 'EMPTY') return;
+  pendingImportMode = 'normal';
+  handleVideoFile(f);
+});
+dropZone.addEventListener('click', e => {
+  if (e.target.id === 'btnLoadRecord') return;
+  if (savedRecord) { toast('请先删除当前记录，才能导入新视频', 'warn'); return; }
+  if (currentState === 'EMPTY') { pendingImportMode = 'normal'; fileInput.click(); }
+});
+$('btnLoadRecord').addEventListener('click', e => {
+  e.stopPropagation();
+  if (savedRecord) { toast('当前已存在动作记录，请先删除记录', 'warn'); return; }
+  $('recordFileInput').click();
+});
+$('recordFileInput').addEventListener('change', e => {
+  loadRecordFile(e.target.files[0]); e.target.value = '';
+});
+
+// 播放 / 暂停·停止
+$('btnPlay').addEventListener('click', () => {
+  if (currentState === 'VIDEO_LOADED') startPlayback();
+  else if (currentState === 'RECORDING') stopRecording();
+});
+$('btnDeleteVideo').addEventListener('click', deleteVideo);
+$('btnCancelCorrect').addEventListener('click', cancelCorrection);
+
+// 记录管理
+$('btnDeleteRecord').addEventListener('click', deleteRecord);
+$('btnDeleteRecord2').addEventListener('click', deleteRecord);
+$('btnExportRecord').addEventListener('click', exportRecord);
+$('btnCorrection').addEventListener('click', enterCorrectionMode);
+$('btnCorrection2').addEventListener('click', enterCorrectionMode);
+
+// 回放控制
+$('btnReplay').addEventListener('click', () => startReplay(true));
+$('btnReplayPlay').addEventListener('click', () => {
+  if (!savedRecord) return;
+  if (replay.time >= savedRecord.duration_seconds) replay.time = 0;
+  replay.playing = !replay.playing;
+  $('btnReplayPlay').textContent = replay.playing ? '暂停' : '播放';
+});
+$('replayProgress').addEventListener('input', e => {
+  if (!savedRecord) return;
+  replay.time = e.target.value / 1000 * savedRecord.duration_seconds;
+  syncReplayUI();
+});
+document.querySelectorAll('.speedBtn').forEach(b => b.addEventListener('click', () => {
+  replay.speed = parseFloat(b.dataset.speed);
+  document.querySelectorAll('.speedBtn').forEach(x => x.classList.toggle('active', x === b));
+}));
+
+// 性别切换
+$('btnMale').addEventListener('click', () => setModelGender('male'));
+$('btnFemale').addEventListener('click', () => setModelGender('female'));
+
+// 自定义模特 / 返回原始模特
+function enterCustom() {
+  subState = 'CUSTOM';
+  customParams = Object.assign({}, GENDER_DEFAULTS[currentGender]); // 初始复制当前性别默认基础值
+  syncSliders();
+  applyBodyParams(customParams);
+  updateButtons();
+}
+function enterOriginal() {
+  subState = 'ORIGINAL';
+  applyBodyParams(GENDER_DEFAULTS[currentGender]);
+  updateButtons();
+}
+$('btnCustom').addEventListener('click', () => { subState === 'CUSTOM' ? enterOriginal() : enterCustom(); });
+$('btnCustom2').addEventListener('click', enterCustom);
+
+// 面板折叠
+$('bodyPanelHeader').addEventListener('click', () => {
+  const p = $('bodyPanel');
+  p.classList.toggle('collapsed');
+  $('collapseIcon').textContent = p.classList.contains('collapsed') ? '▶' : '◀';
+});
+
+// 对称锁定
+$('symLock').addEventListener('change', e => {
+  isSymmetric = e.target.checked;
+  if (isSymmetric) { // 开启时右侧立即同步左侧
+    Object.keys(customParams).forEach(k => {
+      if (k.endsWith('L')) customParams[k.slice(0, -1) + 'R'] = customParams[k];
+    });
+    syncSliders();
+    applyBodyParams(customParams);
+  }
+  applySymmetryUI();
+});
+// 重置为默认（当前性别）
+$('btnResetParams').addEventListener('click', () => {
+  customParams = Object.assign({}, GENDER_DEFAULTS[currentGender]);
+  syncSliders();
+  applyBodyParams(customParams);
+});
+// 模特配置
+$('btnSaveConfig').addEventListener('click', saveModelConfig);
+$('btnLoadConfig').addEventListener('click', () => $('configFileInput').click());
+$('configFileInput').addEventListener('change', e => {
+  loadModelConfig(e.target.files[0]); e.target.value = '';
+});
+
+// 融合权重联动（两滑块之和强制为 1）
+$('weightA').addEventListener('input', e => {
+  $('weightB').value = (1 - parseFloat(e.target.value)).toFixed(2); updateWeightLabels();
+});
+$('weightB').addEventListener('input', e => {
+  $('weightA').value = (1 - parseFloat(e.target.value)).toFixed(2); updateWeightLabels();
+});
+
+// 导出
+$('btnExport').addEventListener('click', export720PVideo);
+
+/* ================================================================
+   18. 启动
+================================================================ */
+function boot() {
+  initPose();
+  buildModelHierarchy();
+  buildSliders();
+  applyBodyParams(GENDER_DEFAULTS[currentGender]);
+  setTPoseTargets();
+  model.root.position.set(0, curLegHeight, 0);
+  resizeToContainer();
+  showLeftPanel('empty');
+  setStatus('正在加载检测引擎…');
+  updateButtons();
+  renderLoop();
+}
+boot();
+</script>
+</body>
+</html>
